@@ -5,32 +5,28 @@
 #include <string>
 #include <algorithm>
 
+// Stand-in regex
+//  Will require CTRE later
 namespace regex {
     using Groups = std::array<std::string_view, 5>;
     using Pattern = std::string_view;
 }
 
-namespace example {
-    using Context = size_t;
-}
-
 namespace step_defines {
 
-template<int index_>
-struct StepDefinition { static constexpr bool is_end = true; };
+namespace registration {
+    template<int index_>
+    struct StepDefinition { static constexpr bool is_end = true; };
 
-// part of registration mechanism
-template<typename T>
-concept step_end = requires { T::is_end == true; };
+    /// Registration mechanism:
+    ///  Each thing we want to register is a specialisation of a countable
+    ///  We then loop through the countable numbers, starting from 0
+    ///  When we reach the first countable number that is not specialised we end the loop
 
-// default to the end
-//  all done in one place so we can change `is_end` var easily
-template<size_t index_> struct Given : StepDefinition<index_> {};
-template<size_t index_> struct When : StepDefinition<index_> {};
-template<size_t index_> struct Then : StepDefinition<index_> {};
-
-
-namespace detail_ {
+    // part of registration mechanism
+    template<typename T>
+    concept step_end = requires { T::is_end == true; };
+    
     // Check template are X<size_t>, i.e. registerable
     template <template <class...> class Template, class... Args>
     void specialization_impl(const Template<Args...>&);
@@ -40,108 +36,49 @@ namespace detail_ {
         specialization_impl<Template>(t);
     };
 }
+// End namespace to start the default, non-specialised, end classes
 
-// part of registration mechanism
-template<typename T> concept given_end = step_end<T> && requires { detail_::int_specialization_of<T, Given> == true ; };
-template<typename T> concept when_end = step_end<T> && requires { detail_::int_specialization_of<T, When> == true ; };
-template<typename T> concept then_end = step_end<T> && requires { detail_::int_specialization_of<T, Then> == true ; };
+template<size_t index_> struct Given : registration::StepDefinition<index_> {};
+template<size_t index_> struct When  : registration::StepDefinition<index_> {};
+template<size_t index_> struct Then  : registration::StepDefinition<index_> {};
 
-// specialise everything else
-template<>
-struct Given<1> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) bananas$"; }
-    // demonstate the value is ignored
-    using ignored = int;
-    static ignored StepDefinition() {
-        // some code, can have side effects
-        return 1;
-    }
-};
 
-template<>
-struct Given<2> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) apples$"; }
-    // demonstate the value can be void
-    static void StepDefinition() {
-        // some code
-        return;
-    }
-};
-
-template<>
-struct Given<3> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) pasties$"; }
-    // demonstate the function can take a regex group
-    static void StepDefinition(const regex::Groups& re_group) {
-        auto _ = re_group.size();
-        return;
-    }
-};
-
-template<>
-struct Given<4> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) Cornish Pasties$"; }
-    // demonstrate the function can take a regex group and context
-    template<typename Context>
-    static void StepDefinition(const regex::Groups& re_group, Context& c) {
-        c = re_group.size();
-        return;
-    }
-};
-template<>
-struct Given<5> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) Scones$"; }
-    // demonstrate the function can just a context
-    template<typename Context>
-    static void StepDefinition(const regex::Groups& re_group, Context& c) {
-        c = 5;
-        return;
-    }
-};
-
-template<> struct When<1> {
-    static consteval std::string_view GetRegex() { return "^I eat a banana$"; }
-    
-    template<typename Context>
-    static Context StepDefinition(Context& c) {
-        return --c;
-    }
-};
-
-template<> struct Then<1> {
-    static consteval std::string_view GetRegex() { return "^I have (.*) bananas$"; }
-    template<typename Context>
-    static void StepDefinition(const regex::Groups& re_group, Context& c) {
-        if (std::stoul(std::string{re_group[0]}) != c) { throw "Assertion failed"; }
-        ;
-    }
-};
+// Not used, commented out to reduce compilation time
+// namespace registration {
+    // template<typename T> concept given_end = registration::step_end<T> && requires { registration::int_specialization_of<T, Given> == true ; };
+    // template<typename T> concept when_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, When>  == true ; };
+    // template<typename T> concept then_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, Then>  == true ; };
+// }
 
 }
 
-constexpr auto RegexMatches(auto pattern, [[maybe_unused]] std::string_view to_match) { 
-    // dummy impl for now 
-    return regex::Groups{"true"};
-    // (pattern.size() %2 == 0);
+namespace regex_dep_inversion {
+    constexpr auto RegexMatches(auto pattern, [[maybe_unused]] std::string_view to_match) { 
+        // dummy impl for now 
+        return regex::Groups{"true"};
+        // (pattern.size() %2 == 0);
+    }
+    using ReGroupType = decltype(RegexMatches(".*", "anything"));
 }
-using ReGroupType = decltype(RegexMatches(".*", "anything"));
 
-template<typename T, typename Context>
-concept RegexContextInvocable = requires (Context c) { T::StepDefinition(regex::Groups{}, c); };
-template<typename T>
-concept RegexInvocable = requires () { T::StepDefinition(regex::Groups{}); };
-template<typename T, typename Context>
-concept ContextInvocable = requires (Context c) { T::StepDefinition(c); };
-template<typename T>
-concept VoidInvocable = requires () { T::StepDefinition(); };
+namespace user_defined_type_erasure {
+    template<typename T, typename Context>
+    concept RegexContextInvocable = requires (Context c) { T::StepDefinition(regex::Groups{}, c); };
+    template<typename T>
+    concept RegexInvocable = requires () { T::StepDefinition(regex::Groups{}); };
+    template<typename T, typename Context>
+    concept ContextInvocable = requires (Context c) { T::StepDefinition(c); };
+    template<typename T>
+    concept VoidInvocable = requires () { T::StepDefinition(); };
+}
 
 template<typename Context>
-using StepDefintionFunctionSignature = decltype(+[](const regex::Groups&, Context&) -> void {});
+using StepDefinitionFunctionSignature = decltype(+[](const regex::Groups&, Context&) -> void {});
 
 template<typename Context>
 struct Step {
     constexpr Step() = default;
-    constexpr Step(const regex::Groups& re_group, const StepDefintionFunctionSignature<Context>& func)
+    constexpr Step(const regex::Groups& re_group, const StepDefinitionFunctionSignature<Context>& func)
         : m_group{re_group}, m_step_code{func}
     {}
 
@@ -151,19 +88,22 @@ struct Step {
     }
 
     regex::Groups m_group;
-    StepDefintionFunctionSignature<Context> m_step_code;
+    StepDefinitionFunctionSignature<Context> m_step_code;
 };
 
-// as we move through we might 
-template<template <size_t> typename StepDefinationType, typename Context, size_t N = 1>
+template<
+    template <size_t> typename StepDefinitionType // Given, When or Then
+  , typename Context                              // User defined context
+  , size_t N = 1                                  // Current iteration of StepDefinitionType
+>               
 consteval Step<Context> GetStepDefinition(const std::string_view to_match) 
 {
-    // using Context = example::Context; // this needs to be template param I think
-    using step_def_to_check = StepDefinationType<N>;
-
+    using step_def_to_check = StepDefinitionType<N>;
+    using regex_dep_inversion::RegexMatches;
     if (auto re_groups = RegexMatches(step_def_to_check::GetRegex(), to_match); re_groups.size() > 0) {
         return Step<Context> { re_groups , 
             +[](const regex::Groups& groups, Context& context) -> void {
+            using namespace user_defined_type_erasure;
             // some type erasure to allow for user to write functions with multiple signatures
             //  cast to void is to avoid issues with return values
             if constexpr (RegexContextInvocable<step_def_to_check, Context>) {
@@ -179,33 +119,34 @@ consteval Step<Context> GetStepDefinition(const std::string_view to_match)
                 return (void)step_def_to_check::StepDefinition();
             } else {
                 // fail
+                //  TODO: static_assert(false)
                 throw "StepDefinition did not match expected function signature";
             }
         }};
     }
-    if constexpr (!step_defines::step_end<StepDefinationType<N+1>>) {
-        return GetStepDefinition<StepDefinationType, Context, N+1>(to_match);
+    if constexpr (!step_defines::registration::step_end<StepDefinitionType<N+1>>) {
+        return GetStepDefinition<StepDefinitionType, Context, N+1>(to_match);
     } else {
-        throw "`Given` string did not match any `Given` regex expressions"
-                "\n (reached end of step_defines::Given)";
+        throw "Step string, e.g. Given: XXX  did not match any regex expressions"
+                "\n (reached end of step_defines, please make sure XXX matches a regex expression)";
     }
 }
-template<typename Context, size_t N = 1>
+template<typename Context>
 consteval auto GetGivenDefinition(const std::string_view to_match) 
 {
-    return GetStepDefinition<step_defines::Given, Context, N>(to_match);
+    return GetStepDefinition<step_defines::Given, Context>(to_match);
 }
 
-template<typename Context, size_t N = 1>
+template<typename Context>
 consteval auto GetWhenDefinition(const std::string_view to_match) 
 {
-    return GetStepDefinition<step_defines::When, Context, N>(to_match);
+    return GetStepDefinition<step_defines::When, Context>(to_match);
 }
 
-template<typename Context, size_t N = 1>
+template<typename Context>
 consteval auto GetThenDefinition(const std::string_view to_match) 
 {
-    return GetStepDefinition<step_defines::Then, Context, N>(to_match);
+    return GetStepDefinition<step_defines::Then, Context>(to_match);
 }
 
 enum class StepType { Given, When, Then, And };
@@ -275,8 +216,6 @@ namespace {
     // static_assert(to_array<5, int, ret_vec>().size() == 4);
     static_assert(to_array<5, int, []() { return ret_vec(); }>().size() == 4);
     static_assert(to_array<5, int, []() { return ret_vec(); }>()[0] == 1);
-
-
 }
 
 template<size_t array_1_size, size_t array_2_size, typename T>
@@ -337,14 +276,27 @@ using string_view = NTTPString_view<std::string_view::npos>;
 
 }
 
+namespace keywords {
+namespace en {
+    static constexpr std::string_view Scenario = "Scenario: ";
+    static constexpr std::string_view Background = "Background: ";
+    static constexpr std::string_view Given = "Given: ";
+    static constexpr std::string_view When = "When ";
+    static constexpr std::string_view Then = "Then ";
+    static constexpr std::string_view And = "And ";
+
+}
+using namespace en;
+}
+
 /// Returns the step type and the remaining bits of the string
 constexpr std::pair<StepType, std::string_view> GetStepType(std::string_view from_line) {
     using namespace constexpr_utils;
     // remove all whitespace from `from_line`
     from_line = TrimStart(from_line);
-    using namespace std::string_view_literals;
-    // TODO: move to constants for localisation
-     for (auto search : {"Given: "sv, "When "sv, "Then "sv, "And "sv}) {
+    // using namespace std::string_view_literals;
+    namespace k = keywords;
+     for (auto search : {k::Given, k::When, k::Then, k::And}) {
         if (from_line.find(search) == 0 ) {
             from_line.remove_prefix(search.size());
             return {
@@ -361,15 +313,14 @@ constexpr std::pair<StepType, std::string_view> GetStepType(std::string_view fro
     throw "String did not start with any expected keywords";
 }
 
-static constexpr std::string_view ScenarioKeyword = "Scenario: ";
-static constexpr std::string_view BackgroundKeyword = "Background: ";
+
 
 template<typename Context>
 consteval auto GetDefinitionsFactory(StepType step_type) {
     switch (step_type) {
-        case StepType::Given: return GetGivenDefinition<Context, 1>;
-        case StepType::When: return GetWhenDefinition<Context, 1>;
-        case StepType::Then: return GetThenDefinition<Context, 1>;
+        case StepType::Given: return GetGivenDefinition<Context>;
+        case StepType::When: return GetWhenDefinition<Context>;
+        case StepType::Then: return GetThenDefinition<Context>;
         case StepType::And: throw "And is not a valid step type for factory";
     }
     throw "String did not start with any expected keywords";
@@ -385,9 +336,9 @@ consteval auto GetStepDefinition(std::string_view to_match, StepType previous) {
         return to_match.find(search) != std::string_view::npos;
     };
 
-    if (contains("And ")) {
-        using namespace std::string_view_literals;
-        to_match.remove_prefix("And "sv.size());
+    if (contains(keywords::And)) {
+        // using namespace std::string_view_literals;
+        to_match.remove_prefix(keywords::And.size());
         GetDefinitionsFactory<Context>(previous)(to_match);
     }
     auto [step_type, remaining] = GetStepType(to_match);
@@ -396,26 +347,26 @@ consteval auto GetStepDefinition(std::string_view to_match, StepType previous) {
 
 consteval std::string_view RemoveScenarioHeader(std::string_view scenario) {
     using constexpr_utils::Trim;
-    const auto start_scenario_pos = scenario.find(ScenarioKeyword) + ScenarioKeyword.size(); 
+    const auto start_scenario_pos = scenario.find(keywords::Scenario) + keywords::Scenario.size(); 
     const auto start_steps_pos = scenario.find('\n', start_scenario_pos);
     scenario = Trim(scenario.substr(start_steps_pos + 1));
     return scenario;
 }
 namespace {
     using namespace std::string_view_literals;
-    constexpr auto scen_text = R"(
+    constexpr auto scenario_text = R"(
   Scenario: Eating a banana
     Given I have 5 bananas
     When I eat a banana
     Then I have 4 bananas
 )"sv;
-    static_assert(RemoveScenarioHeader(scen_text).size() < scen_text.size());
-    static_assert(RemoveScenarioHeader(scen_text).find(ScenarioKeyword) == std::string_view::npos);
-    static_assert(RemoveScenarioHeader(scen_text).find("Eating a banana") == std::string_view::npos);
+    static_assert(RemoveScenarioHeader(scenario_text).size() < scenario_text.size());
+    static_assert(RemoveScenarioHeader(scenario_text).find(keywords::Scenario) == std::string_view::npos);
+    static_assert(RemoveScenarioHeader(scenario_text).find("Eating a banana") == std::string_view::npos);
     constexpr auto expected_2 = R"(Given I have 5 bananas
     When I eat a banana
     Then I have 4 bananas)"sv;
-    static_assert(RemoveScenarioHeader(scen_text) == expected_2);
+    static_assert(RemoveScenarioHeader(scenario_text) == expected_2);
 }
 
 template<typename Context>
@@ -439,7 +390,7 @@ consteval std::vector<Step<Context>> CreateSteps(std::string_view scenario /*, s
 
 template<constexpr_utils::NTTPString_view scenario_, typename Context>
 consteval auto CreateTest() {
-    // should not be accessed as default initalised
+    // should not be accessed as default initialised
     //  if it is that means the first value was And
     using namespace constexpr_utils;
     // vector -> array
@@ -457,11 +408,10 @@ consteval auto CreateTest() {
             }
         }
     };
-    // return annon class
+    // return anonymous class
     return test_case{steps_arr};
 }
 
-// constexpr char feature[329] = 
 constexpr auto feature = R"(
 Feature: Eating Bananas
   In order to not be hungry
@@ -480,26 +430,20 @@ Feature: Eating Bananas
     Then I have 3 bananas
 )";
 
-
-// Scenario needs to be a class
-//  A feature can have a background so we need to parse that first 
-//   then create a background class which has all the background
-//  Each Scenario needs to have a nullable stack pointer to background
-//
 template<typename Context>
 struct Background {
     constexpr Background() = default;
-    // Text should not include any scen
+    // Text should not include any scenarios
     consteval Background(const std::string_view feature_only_text) {
         using namespace std::string_view_literals;
         // check we have a background
-        const auto background_start = feature_only_text.find(BackgroundKeyword);
+        const auto background_start = feature_only_text.find(keywords::Background);
         if (background_start == std::string_view::npos) { return; }
-        const auto background_end = feature_only_text.find(ScenarioKeyword, background_start);
+        const auto background_end = feature_only_text.find(keywords::Scenario, background_start);
         using namespace constexpr_utils;
         auto background_text = Trim(
             feature_only_text.substr(
-                background_start + BackgroundKeyword.size()
+                background_start + keywords::Background.size()
               , background_end
                 )
             );
@@ -509,21 +453,13 @@ struct Background {
     std::vector<Step<Context>> m_background_steps;
 };
 
-template<typename Context>
-struct Scenario {
-    template<constexpr_utils::NTTPString_view scenario>
-    consteval Scenario(Background<Context> background) {
-        
-    }
-};
-
 template<constexpr_utils::NTTPString_view feature_, typename Context = int>
 consteval std::vector<std::string_view> SplitIntoScenarios() {
     // template<size_t N>
     // using string_view = constexpr_utils::NTTPString_view<N>;
     // basic sanity check
     auto feature = static_cast<std::string_view>(feature_);
-    auto scenario_pos = feature.find(ScenarioKeyword);
+    auto scenario_pos = feature.find(keywords::Scenario);
     if (scenario_pos == std::string_view::npos) throw "No scenario found in feature";
     // Background
     auto background = Background<Context>{feature.substr(0, scenario_pos)};
@@ -531,7 +467,7 @@ consteval std::vector<std::string_view> SplitIntoScenarios() {
     // start filling
     std::vector<std::string_view> scenarios{};
     while(scenario_pos != std::string_view::npos) {
-        auto next_scenario_pos = feature.find(ScenarioKeyword, scenario_pos + 1);
+        auto next_scenario_pos = feature.find(keywords::Scenario, scenario_pos + 1);
         auto scenario = feature.substr(scenario_pos, next_scenario_pos - scenario_pos);
         using namespace constexpr_utils;
         scenario = Trim(scenario);
@@ -549,17 +485,94 @@ consteval auto SplitIntoNTTPScenarios() {
         100, std::string_view, [](){ return SplitIntoScenarios<feature_>(); }
     >();
     std::array<constexpr_utils::string_view, scenarios_.size()> nttp_scenarios{};
-    // std::ranges::copy(scenarios_, nttp_scenarios);
     for (size_t i = 0; const std::string_view& scenario : scenarios_ ) {
         if (scenario.size() < 1) throw "Not valid scenario";
         if (constexpr_utils::string_view{ scenario }.size() < 1) throw "Bad creation of CU::string_view"; 
-        nttp_scenarios[i] = { scenario }; // implicit conversion
+        nttp_scenarios[i] = { scenario }; // convert
         ++i;
     }
     return nttp_scenarios;
 }
 
+namespace step_defines {
+
+template<>
+struct Given<1> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) bananas$"; }
+    // demonstrate the value is ignored
+    using ignored = int;
+    static ignored StepDefinition() {
+        // some code
+        //  will likely have side effects
+        return 1;
+    }
+};
+
+template<>
+struct Given<2> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) apples$"; }
+    // demonstrate the value can be void
+    static void StepDefinition() {
+        // some code
+        return;
+    }
+};
+
+template<>
+struct Given<3> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) pasties$"; }
+    // demonstrate the function can take a regex group
+    static void StepDefinition(const regex::Groups& re_group) {
+        auto _ = re_group.size();
+        return;
+    }
+};
+
+template<>
+struct Given<4> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) Cornish Pasties$"; }
+    // demonstrate the function can take a regex group and context
+    template<typename Context>
+    static void StepDefinition(const regex::Groups& re_group, Context& c) {
+        c = re_group.size();
+        return;
+    }
+};
+template<>
+struct Given<5> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) Scones$"; }
+    // demonstrate the function can just a context
+    template<typename Context>
+    static void StepDefinition(Context& c) {
+        c = 5;
+        return;
+    }
+};
+
+template<> struct When<1> {
+    static consteval std::string_view GetRegex() { return "^I eat a banana$"; }
+    
+    template<typename Context>
+    static Context StepDefinition(Context& c) {
+        return --c;
+    }
+};
+
+template<> struct Then<1> {
+    static consteval std::string_view GetRegex() { return "^I have (.*) bananas$"; }
+    template<typename Context>
+    static void StepDefinition(const regex::Groups& re_group, Context& c) {
+        if (std::stoul(std::string{re_group[0]}) != c) { throw "Assertion failed"; }
+        ;
+    }
+};
+}
+
 namespace {
+    namespace example {
+        using Context = size_t;
+    }
+
     using namespace std::string_view_literals;
     constexpr auto expected = R"(Scenario: Eating a banana
     Given: I have 5 bananas
