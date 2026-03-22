@@ -164,13 +164,7 @@ constexpr std::string_view TrimStart(std::string_view str) {
     }
     return str.substr(first_char);
 }
-namespace {
-    using namespace std::string_view_literals;
-    static_assert(TrimStart("  Hello").size() == "Hello"sv.size());
-    static_assert(TrimStart(" \n Hello") == "Hello");
-    static_assert(TrimStart("\n  Hello").size() == "Hello"sv.size());
-    static_assert(TrimStart("\tHello").size() == "Hello"sv.size());
-}
+
 constexpr std::string_view TrimEnd(std::string_view str) {
     const auto last_not_newline = str.find_last_not_of('\n');
     const auto last_not_space = str.find_last_not_of(' ', last_not_newline);
@@ -186,13 +180,6 @@ constexpr std::string_view TrimEnd(std::string_view str) {
 }
 constexpr std::string_view Trim(std::string_view str) {
     return TrimEnd(TrimStart(str));
-}
-namespace {
-    using namespace std::string_view_literals;
-    static_assert(Trim("  Hello  ").size() == "Hello"sv.size());
-    static_assert(Trim("  Hello  ") == "Hello");
-    static_assert(Trim("\n  Hello \n").size() == "Hello"sv.size());
-    static_assert(Trim("\tHello \t \n").size() == "Hello"sv.size());
 }
 
 // the constexpr 2 step copy to go from vector to array
@@ -211,12 +198,6 @@ constexpr auto to_array() noexcept {
     for (size_t i = 0; i < data.second; ++i ) { result[i] = data.first[i]; }
     return result;
 }
-namespace {
-    consteval auto ret_vec() { return std::vector<int>{ 1,2,3,4}; }
-    // static_assert(to_array<5, int, ret_vec>().size() == 4);
-    static_assert(to_array<5, int, []() { return ret_vec(); }>().size() == 4);
-    static_assert(to_array<5, int, []() { return ret_vec(); }>()[0] == 1);
-}
 
 template<size_t array_1_size, size_t array_2_size, typename T>
 consteval std::array<T, array_1_size + array_2_size> UnionArrays(const std::array<T,array_1_size>& first, const std::array<T, array_2_size>& second) {
@@ -224,11 +205,6 @@ consteval std::array<T, array_1_size + array_2_size> UnionArrays(const std::arra
     auto last = std::copy(first.begin(), first.end(), result.begin());
     std::copy(second.begin(), second.end(), last);
     return result;
-}
-namespace {
-    static_assert(
-        UnionArrays(std::array{1,2,3,4}, std::array{5,6,7,8,9}) == std::array{1,2,3,4,5,6,7,8,9}
-    );
 }
 
 constexpr size_t constexprStrlen(const char* str) {
@@ -276,6 +252,8 @@ using string_view = NTTPString_view<std::string_view::npos>;
 
 }
 
+// Should be moved to a class 
+//  Then we can have a concept trickle through after analysing the first line
 namespace keywords {
 namespace en {
     static constexpr std::string_view Scenario = "Scenario: ";
@@ -313,8 +291,6 @@ constexpr std::pair<StepType, std::string_view> GetStepType(std::string_view fro
     throw "String did not start with any expected keywords";
 }
 
-
-
 template<typename Context>
 consteval auto GetDefinitionsFactory(StepType step_type) {
     switch (step_type) {
@@ -351,22 +327,6 @@ consteval std::string_view RemoveScenarioHeader(std::string_view scenario) {
     const auto start_steps_pos = scenario.find('\n', start_scenario_pos);
     scenario = Trim(scenario.substr(start_steps_pos + 1));
     return scenario;
-}
-namespace {
-    using namespace std::string_view_literals;
-    constexpr auto scenario_text = R"(
-  Scenario: Eating a banana
-    Given I have 5 bananas
-    When I eat a banana
-    Then I have 4 bananas
-)"sv;
-    static_assert(RemoveScenarioHeader(scenario_text).size() < scenario_text.size());
-    static_assert(RemoveScenarioHeader(scenario_text).find(keywords::Scenario) == std::string_view::npos);
-    static_assert(RemoveScenarioHeader(scenario_text).find("Eating a banana") == std::string_view::npos);
-    constexpr auto expected_2 = R"(Given I have 5 bananas
-    When I eat a banana
-    Then I have 4 bananas)"sv;
-    static_assert(RemoveScenarioHeader(scenario_text) == expected_2);
 }
 
 template<typename Context>
@@ -411,24 +371,6 @@ consteval auto CreateTest() {
     // return anonymous class
     return test_case{steps_arr};
 }
-
-constexpr auto feature = R"(
-Feature: Eating Bananas
-  In order to not be hungry
-  As a monkey
-  I want to eat bananas
-
-  Scenario: Eating a banana
-    Given: I have 5 bananas
-    When I eat a banana
-    Then I have 4 bananas
-
-  Scenario: Eating two banana
-    Given: I have 5 bananas
-    When I eat a banana
-    And I eat a banana
-    Then I have 3 bananas
-)";
 
 template<typename Context>
 struct Background {
@@ -494,6 +436,7 @@ consteval auto SplitIntoNTTPScenarios() {
     return nttp_scenarios;
 }
 
+// example usage:
 namespace step_defines {
 
 template<>
@@ -568,7 +511,67 @@ template<> struct Then<1> {
 };
 }
 
-namespace {
+namespace test_RemoveScenarioHeader {
+    using namespace std::string_view_literals;
+    constexpr auto scenario_text = R"(
+  Scenario: Eating a banana
+    Given I have 5 bananas
+    When I eat a banana
+    Then I have 4 bananas
+)"sv;
+    static_assert(RemoveScenarioHeader(scenario_text).size() < scenario_text.size());
+    static_assert(RemoveScenarioHeader(scenario_text).find(keywords::Scenario) == std::string_view::npos);
+    static_assert(RemoveScenarioHeader(scenario_text).find("Eating a banana") == std::string_view::npos);
+    constexpr auto expected_2 = R"(Given I have 5 bananas
+    When I eat a banana
+    Then I have 4 bananas)"sv;
+    static_assert(RemoveScenarioHeader(scenario_text) == expected_2);
+}
+
+namespace test_to_array {
+    consteval auto ret_vec() { return std::vector<int>{ 1,2,3,4}; }
+    // static_assert(to_array<5, int, ret_vec>().size() == 4);
+    static_assert(constexpr_utils::to_array<5, int, []() { return ret_vec(); }>().size() == 4);
+    static_assert(constexpr_utils::to_array<5, int, []() { return ret_vec(); }>()[0] == 1);
+}
+
+namespace test_trim {
+    using namespace std::string_view_literals;
+    static_assert(constexpr_utils::Trim("  Hello  ").size() == "Hello"sv.size());
+    static_assert(constexpr_utils::Trim("  Hello  ") == "Hello");
+    static_assert(constexpr_utils::Trim("\n  Hello \n").size() == "Hello"sv.size());
+    static_assert(constexpr_utils::Trim("\tHello \t \n").size() == "Hello"sv.size());
+
+    static_assert(constexpr_utils::TrimStart("  Hello").size() == "Hello"sv.size());
+    static_assert(constexpr_utils::TrimStart(" \n Hello") == "Hello");
+    static_assert(constexpr_utils::TrimStart("\n  Hello").size() == "Hello"sv.size());
+    static_assert(constexpr_utils::TrimStart("\tHello").size() == "Hello"sv.size());
+}
+
+namespace test_UnionArrays {
+    static_assert(
+        UnionArrays(std::array{1,2,3,4}, std::array{5,6,7,8,9}) == std::array{1,2,3,4,5,6,7,8,9}
+    );
+}
+
+namespace test_e2e {
+    constexpr auto feature = R"(
+Feature: Eating Bananas
+  In order to not be hungry
+  As a monkey
+  I want to eat bananas
+
+  Scenario: Eating a banana
+    Given: I have 5 bananas
+    When I eat a banana
+    Then I have 4 bananas
+
+  Scenario: Eating two banana
+    Given: I have 5 bananas
+    When I eat a banana
+    And I eat a banana
+    Then I have 3 bananas
+)";
     namespace example {
         using Context = size_t;
     }
