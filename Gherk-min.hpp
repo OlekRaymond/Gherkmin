@@ -5,6 +5,8 @@
 #include <string>
 #include <algorithm>
 
+#include <ctre.hpp>
+
 // Stand-in regex
 //  Will require CTRE later
 namespace regex {
@@ -13,6 +15,110 @@ namespace regex {
 }
 
 namespace gherk_min {
+
+
+namespace constexpr_utils {
+
+constexpr std::string_view TrimStart(std::string_view str) {
+    const auto first_not_newline = str.find_first_not_of('\n');
+    const auto first_not_space = str.find_first_not_of(' ', first_not_newline);
+    const auto first_not_tab = str.find_first_not_of('\t', first_not_space);
+    const auto first_char = first_not_tab;
+    if (first_char >= str.size()) throw "String only contains whitespace characters";
+    if (first_char != 0) {
+        return TrimStart(str.substr(first_char));
+    }
+    return str.substr(first_char);
+}
+
+constexpr std::string_view TrimEnd(std::string_view str) {
+    const auto last_not_newline = str.find_last_not_of('\n');
+    const auto last_not_space = str.find_last_not_of(' ', last_not_newline);
+    const auto last_not_tab = str.find_last_not_of('\t', last_not_space);
+    const auto last_char = last_not_tab;
+    if (last_char >= str.size()) throw "String only contains whitespace characters";
+    auto trimmed = str.substr(0, last_char + 1);
+    if (trimmed.size() == str.size()) {
+        return trimmed;
+    } else {
+        return TrimEnd(trimmed);
+    }
+}
+constexpr std::string_view Trim(std::string_view str) {
+    return TrimEnd(TrimStart(str));
+}
+
+// the constexpr 2 step copy to go from vector to array
+template<size_t max_size, typename ValueType, auto builder, auto... args>
+constexpr auto to_array() noexcept {
+    namespace r = std::ranges;
+    constexpr auto data = []() {
+        const auto vec = builder();
+        // using no_ref_value = std::remove_cvref<decltype(vec[0])>;
+        std::array<ValueType, max_size> result{};
+        const auto end_position = r::copy(vec, r::begin(result)).out;
+        const auto size_ = r::distance(begin(result), end_position);
+        return std::pair {result, size_};
+    }(args...);
+    std::array<ValueType, data.second> result{};
+    for (size_t i = 0; i < data.second; ++i ) { result[i] = data.first[i]; }
+    return result;
+}
+
+template<size_t array_1_size, size_t array_2_size, typename T>
+consteval std::array<T, array_1_size + array_2_size> UnionArrays(const std::array<T,array_1_size>& first, const std::array<T, array_2_size>& second) {
+    std::array<T, array_1_size + array_2_size> result{};
+    auto last = std::copy(first.begin(), first.end(), result.begin());
+    std::copy(second.begin(), second.end(), last);
+    return result;
+}
+
+constexpr size_t constexprStrlen(const char* str) {
+    for (size_t i = 0; ; ++i) {
+        if (str[i] == '\0') return i;
+    }
+    return -1;
+}
+
+template<size_t N>
+struct NTTPString_view {
+    explicit consteval NTTPString_view(const char* str) {
+        std::copy(str, str + N, value);
+    }
+    consteval NTTPString_view(const char (&str)[N]) {
+        std::copy(str, str + N, value);
+    }
+    consteval NTTPString_view(const std::array<char, N> str) {
+        std::copy(str, N, value);
+    }
+
+    consteval operator std::string_view() const {
+        return std::string_view{value, N - 1 };
+    }
+    consteval size_t size() const { return N; }
+    
+    char value[N];
+};
+
+template<>
+struct NTTPString_view<std::string_view::npos> {
+    const char* begin_;
+    size_t end_;
+    constexpr const char* begin() { return begin_; }
+    constexpr const char* end() { return begin_ + end_; }
+    constexpr NTTPString_view() : begin_(), end_() {}
+    constexpr NTTPString_view(std::string_view from)
+        : begin_(from.begin()) , end_(from.size())
+    {}
+    consteval operator std::string_view() const {
+        return std::string_view{begin_, end_ };
+    }
+    constexpr size_t size() { return end_; }
+};
+using string_view = NTTPString_view<std::string_view::npos>;
+
+}
+
 
 namespace step_defines {
 
@@ -38,29 +144,31 @@ namespace registration {
         specialization_impl<Template>(t);
     };
 }
-// End namespace to start the default, non-specialised, end classes
+// End namespace to start the default, non-specialised, "end" classes
 
 template<size_t index_> struct Given : registration::StepDefinition<index_> {};
 template<size_t index_> struct When  : registration::StepDefinition<index_> {};
 template<size_t index_> struct Then  : registration::StepDefinition<index_> {};
 
 
-// Not used, commented out to reduce compilation time
-// namespace registration {
-    // template<typename T> concept given_end = registration::step_end<T> && requires { registration::int_specialization_of<T, Given> == true ; };
-    // template<typename T> concept when_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, When>  == true ; };
-    // template<typename T> concept then_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, Then>  == true ; };
-// }
+// Not used, removed to reduce compilation time
+#if defined(GHERKMIN_ADD_STEP_END_CONCEPTS)
+namespace registration {
+    template<typename T> concept given_end = registration::step_end<T> && requires { registration::int_specialization_of<T, Given> == true ; };
+    template<typename T> concept when_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, When>  == true ; };
+    template<typename T> concept then_end  = registration::step_end<T> && requires { registration::int_specialization_of<T, Then>  == true ; };
+}
+#endif
 
 }
 
 namespace regex_dep_inversion {
-    constexpr auto RegexMatches(auto pattern, [[maybe_unused]] std::string_view to_match) { 
-        // dummy impl for now 
-        return regex::Groups{"true"};
-        // (pattern.size() %2 == 0);
+    template<constexpr_utils::NTTPString_view pattern>
+    constexpr auto RegexMatches([[maybe_unused]] std::string_view to_match) {
+        constexpr auto transformed_pattern = ctll::fixed_string<pattern.size()-1>{pattern.value};
+        return ctre::match<transformed_pattern>(to_match);
     }
-    using ReGroupType = decltype(RegexMatches(".*", "anything"));
+    using ReGroupType = decltype(RegexMatches<".*">("anything"));
 }
 
 namespace user_defined_type_erasure {
@@ -153,107 +261,6 @@ consteval auto GetThenDefinition(const std::string_view to_match)
 
 enum class StepType { Given, When, Then, And };
 
-namespace constexpr_utils {
-
-constexpr std::string_view TrimStart(std::string_view str) {
-    const auto first_not_newline = str.find_first_not_of('\n');
-    const auto first_not_space = str.find_first_not_of(' ', first_not_newline);
-    const auto first_not_tab = str.find_first_not_of('\t', first_not_space);
-    const auto first_char = first_not_tab;
-    if (first_char >= str.size()) throw "String only contains whitespace characters";
-    if (first_char != 0) {
-        return TrimStart(str.substr(first_char));
-    }
-    return str.substr(first_char);
-}
-
-constexpr std::string_view TrimEnd(std::string_view str) {
-    const auto last_not_newline = str.find_last_not_of('\n');
-    const auto last_not_space = str.find_last_not_of(' ', last_not_newline);
-    const auto last_not_tab = str.find_last_not_of('\t', last_not_space);
-    const auto last_char = last_not_tab;
-    if (last_char >= str.size()) throw "String only contains whitespace characters";
-    auto trimmed = str.substr(0, last_char + 1);
-    if (trimmed.size() == str.size()) {
-        return trimmed;
-    } else {
-        return TrimEnd(trimmed);
-    }
-}
-constexpr std::string_view Trim(std::string_view str) {
-    return TrimEnd(TrimStart(str));
-}
-
-// the constexpr 2 step copy to go from vector to array
-template<size_t max_size, typename ValueType, auto builder, auto... args>
-constexpr auto to_array() noexcept {
-    namespace r = std::ranges;
-    constexpr auto data = []() {
-        const auto vec = builder();
-        // using no_ref_value = std::remove_cvref<decltype(vec[0])>;
-        std::array<ValueType, max_size> result{};
-        const auto end_position = r::copy(vec, r::begin(result)).out;
-        const auto size_ = r::distance(begin(result), end_position);
-        return std::pair {result, size_};
-    }(args...);
-    std::array<ValueType, data.second> result{};
-    for (size_t i = 0; i < data.second; ++i ) { result[i] = data.first[i]; }
-    return result;
-}
-
-template<size_t array_1_size, size_t array_2_size, typename T>
-consteval std::array<T, array_1_size + array_2_size> UnionArrays(const std::array<T,array_1_size>& first, const std::array<T, array_2_size>& second) {
-    std::array<T, array_1_size + array_2_size> result{};
-    auto last = std::copy(first.begin(), first.end(), result.begin());
-    std::copy(second.begin(), second.end(), last);
-    return result;
-}
-
-constexpr size_t constexprStrlen(const char* str) {
-    for (size_t i = 0; ; ++i) {
-        if (str[i] == '\0') return i;
-    }
-    return -1;
-}
-
-template<size_t N>
-struct NTTPString_view {
-    explicit consteval NTTPString_view(const char* str) {
-        std::copy(str, str + N, value);
-    }
-    consteval NTTPString_view(const char (&str)[N]) {
-        std::copy(str, str + N, value);
-    }
-    consteval NTTPString_view(const std::array<char, N> str) {
-        std::copy(str, N, value);
-    }
-
-    consteval operator std::string_view() const {
-        return std::string_view{value, N - 1 };
-    }
-    
-    char value[N];
-};
-
-template<>
-struct NTTPString_view<std::string_view::npos> {
-    const char* begin_;
-    size_t end_;
-    constexpr const char* begin() { return begin_; }
-    constexpr const char* end() { return begin_ + end_; }
-    constexpr NTTPString_view() : begin_(), end_() {}
-    constexpr NTTPString_view(std::string_view from)
-        : begin_(from.begin()) , end_(from.size())
-    {}
-    consteval operator std::string_view() const {
-        return std::string_view{begin_, end_ };
-    }
-    constexpr size_t size() { return end_; }
-};
-using string_view = NTTPString_view<std::string_view::npos>;
-
-}
-
 // Should be moved to a class 
 //  Then we can have a concept trickle through after analysing the first line
 namespace keywords {
@@ -280,7 +287,7 @@ using default_lang = en;
 }
 
 /// Returns the step type and the remaining bits of the string
-template<keywords::Language Keywords = keywords::en>
+template<keywords::Language Keywords = keywords::default_lang>
 constexpr std::pair<StepType, std::string_view> GetStepType(std::string_view from_line) {
     using namespace constexpr_utils;
     // remove all whitespace from `from_line`
@@ -316,7 +323,7 @@ consteval auto GetDefinitionsFactory(StepType step_type) {
 }
 
 // previous really should be a strong type or something more useful
-template<typename Context, keywords::Language Keywords = keywords::en>
+template<typename Context, keywords::Language Keywords = keywords::default_lang>
 consteval auto GetStepDefinition(std::string_view to_match, StepType previous) {
     using namespace constexpr_utils;
     // Remove whitespace from start of line
@@ -334,7 +341,7 @@ consteval auto GetStepDefinition(std::string_view to_match, StepType previous) {
     return std::make_tuple(GetDefinitionsFactory<Context>(step_type)(remaining), step_type);
 }
 
-template<keywords::Language Keywords = keywords::en>
+template<keywords::Language Keywords = keywords::default_lang>
 consteval std::string_view RemoveScenarioHeader(std::string_view scenario) {
     using constexpr_utils::Trim;
     const auto start_scenario_pos = scenario.find(Keywords::Scenario) + Keywords::Scenario.size(); 
@@ -344,7 +351,7 @@ consteval std::string_view RemoveScenarioHeader(std::string_view scenario) {
 }
 
 // template<typename Context>
-template<typename Context, keywords::Language Keywords = keywords::en>
+template<typename Context, keywords::Language Keywords = keywords::default_lang>
 consteval std::vector<Step<Context>> CreateSteps(std::string_view scenario /*, std::vector<Step>&& existing = {}*/) {
     using constexpr_utils::Trim;
     StepType previous{};
@@ -363,7 +370,7 @@ consteval std::vector<Step<Context>> CreateSteps(std::string_view scenario /*, s
     return steps;
 }
 
-template<constexpr_utils::NTTPString_view scenario_, typename Context, keywords::Language Keywords = keywords::en>
+template<constexpr_utils::NTTPString_view scenario_, typename Context, keywords::Language Keywords = keywords::default_lang>
 consteval auto CreateTest() {
     // should not be accessed as default initialised
     //  if it is that means the first value was And
@@ -392,7 +399,7 @@ struct Background {
     constexpr Background() = default;
 
     // Text should not include any scenarios
-    template<keywords::Language Keywords = keywords::en>
+    template<keywords::Language Keywords = keywords::default_lang>
     consteval Background(const std::string_view feature_only_text) {
         using namespace std::string_view_literals;
         // check we have a background
@@ -416,10 +423,11 @@ template<constexpr_utils::NTTPString_view feature_, typename Context = int>
 consteval std::vector<std::string_view> SplitIntoScenarios() {
     // template<size_t N>
     // using string_view = constexpr_utils::NTTPString_view<N>;
-    constexpr keywords::Language auto k = /*GetLanguage(feature_)*/ keywords::default_lang;
+    constexpr keywords::Language auto k = /*GetLanguage(feature_)*/ keywords::default_lang{};
+
     // basic sanity check
     auto feature = static_cast<std::string_view>(feature_);
-    auto scenario_pos = feature.find(k::Scenario);
+    auto scenario_pos = feature.find(k.Scenario);
     if (scenario_pos == std::string_view::npos) throw "No scenario found in feature";
     // Background
     auto background = Background<Context>{feature.substr(0, scenario_pos)};
@@ -427,7 +435,7 @@ consteval std::vector<std::string_view> SplitIntoScenarios() {
     // start filling
     std::vector<std::string_view> scenarios{};
     while(scenario_pos != std::string_view::npos) {
-        auto next_scenario_pos = feature.find(k::Scenario, scenario_pos + 1);
+        auto next_scenario_pos = feature.find(k.Scenario, scenario_pos + 1);
         auto scenario = feature.substr(scenario_pos, next_scenario_pos - scenario_pos);
         using namespace constexpr_utils;
         scenario = Trim(scenario);
